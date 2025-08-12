@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Parking Assignment Optimizer – HTML + Map (offline-ready)</title>
+
+<!-- Leaflet (Map) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<style>
+  :root{
+    --bg:#0b1220; --panel:#0f172a; --border:#1f2937; --muted:#94a3b8; --text:#e5e7eb;
+    --accent:#0ea5e9; --ok:#34d399; --warn:#f59e0b; --violet:#a78bfa; --green:#34d399; --blue:#60a5fa;
+  }
+  body{margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,"Segoe UI",Roboto}
+  .container{max-width:1200px;margin:22px auto;padding:0 14px}
+  .title{font-size:26px;font-weight:800;display:flex;gap:10px;align-items:center}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:14px}
+  .grid{display:grid;gap:14px}
+  .grid-3{grid-template-columns:1fr 1fr 1fr}
+  .section{font-size:12px;text-transform:uppercase;color:#93c5fd;letter-spacing:.4px;font-weight:700}
+  textarea{width:100%;min-height:230px;background:#0a1220;border:1px solid #223047;border-radius:10px;color:var(--text);
+           padding:10px;font-family:ui-monospace,Consolas,Menlo,monospace;font-size:13px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}
+  button{background:var(--accent);color:white;border:none;border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer}
+  button.secondary{background:#334155}
+  select{background:#0b1220;color:var(--text);border:1px solid #243041;border-radius:8px;padding:6px;min-width:120px}
+  table{width:100%;border-collapse:collapse}
+  th,td{border-bottom:1px solid var(--border);padding:8px;text-align:left}
+  th{color:#93c5fd;font-size:12px;text-transform:uppercase}
+  .pill{display:inline-flex;gap:6px;padding:4px 8px;border-radius:999px;border:1px solid #334155;color:#a5b4fc}
+  .muted{color:var(--muted)}
+  .kpi{display:flex;gap:12px;flex-wrap:wrap}
+  .kcard{flex:1 1 240px;background:#0b1220;border:1px solid var(--border);border-radius:12px;padding:10px}
+  .kval{font-size:24px;font-weight:800}
+  .right{text-align:right}
+  #map{height:420px;border:1px solid var(--border);border-radius:14px;margin-top:10px}
+  .legend{display:flex;gap:8px;align-items:center}
+  .swatch{width:12px;height:12px;border-radius:3px;display:inline-block}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="title">🚗 Parking Assignment Optimizer <span class="muted">HTML + Karte</span></div>
+
+  <div class="panel grid grid-3">
+    <div>
+      <div class="section">Apartments (name → [x,y])</div>
+      <textarea id="apartments">{
+  "A1": [5,3], "A2": [8,1], "A3": [2,7], "A4": [9,6], "A5": [4,5],
+  "A6": [6,8], "A7": [1,2], "A8": [3,9], "A9": [7,4], "A10": [0,0]
+}</textarea>
+    </div>
+    <div>
+      <div class="section">Demands (apartment → 1 or 2)</div>
+      <textarea id="demands">{
+  "A1": 2, "A2": 1, "A3": 2, "A4": 1, "A5": 1,
+  "A6": 2, "A7": 2, "A8": 1, "A9": 1, "A10": 1
+}</textarea>
+    </div>
+    <div>
+      <div class="section">Spots (name → [x,y]) — mix P* / C*</div>
+      <textarea id="spots">{
+  "P1": [1,0], "P2": [1,2], "P3": [1,4],
+  "C1": [2,0], "C2": [2,2], "C3": [2,4],
+  "P4": [3,0], "P5": [3,2], "C4": [3,4],
+  "P6": [4,0], "P7": [4,2], "C5": [4,4],
+  "P8": [5,0], "P9": [5,2], "C6": [5,4],
+  "P10": [6,0], "P11": [6,2], "C7": [6,4],
+  "P12": [7,0], "P13": [7,2], "C8": [7,4]
+}</textarea>
+    </div>
+  </div>
+
+  <div class="row">
+    <label class="muted">Metrik:&nbsp;</label>
+    <select id="metric">
+      <option value="euclid" selected>Euclid (Luftlinie)</option>
+      <option value="manhattan">Manhattan (90°)</option>
+    </select>
+    <button id="btnOpt">Compute optimal assignment</button>
+    <button id="btnReset" class="secondary">Reset selections</button>
+    <button id="btnExport" class="secondary">Export result JSON</button>
+    <button id="btnFit" class="secondary">Zoom to fit</button>
+  </div>
+
+  <div class="kpi">
+    <div class="kcard"><div class="muted">Apartments</div><div id="kA" class="kval">–</div></div>
+    <div class="kcard"><div class="muted">Total demand (slots)</div><div id="kSlots" class="kval">–</div></div>
+    <div class="kcard"><div class="muted">Available spots</div><div id="kSpots" class="kval">–</div></div>
+    <div class="kcard"><div class="muted">Avg distance / apartment</div><div id="kAvg" class="kval">–</div></div>
+  </div>
+
+  <div class="panel" style="margin-top:10px;">
+    <div class="section">Virtuelle Karte</div>
+    <div class="legend">
+      <span class="swatch" style="background:#60a5fa"></span><span class="muted">Apartment</span>
+      <span class="swatch" style="background:#34d399"></span><span class="muted">Platz P*</span>
+      <span class="swatch" style="background:#a78bfa"></span><span class="muted">Carport C*</span>
+      <span class="swatch" style="background:#f59e0b"></span><span class="muted">Zuweisungslinien</span>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <div class="panel" style="margin-top:12px;">
+    <div class="section">Assignment (editable)</div>
+    <div id="assignArea" class="muted" style="margin-top:8px;">Run optimization to see assignments…</div>
+  </div>
+
+  <p class="muted" style="margin-top:10px;">Hinweis: Wohnungen mit Bedarf 2 zählen in der Zielfunktion mit dem Mittelwert ihrer beiden Wege. Alles läuft rein im Browser, keine Server nötig. (Für die Kartenkacheln ist Internet hilfreich.)</p>
+</div>
+
+<script>
+const $ = (id)=>document.getElementById(id);
+function parseJSONSafe(name, txt){
+  try{ const o = JSON.parse(txt); if(!o || typeof o!=="object" || Array.isArray(o)) throw 0; return o; }
+  catch{ alert(name+" JSON error"); throw new Error(name+" JSON error"); }
+}
+function euclid(a,b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+function manhattan(a,b){ return Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]); }
+function dist(a,b){ return ($("metric").value==="euclid")? euclid(a,b) : manhattan(a,b); }
+
+// -------- Build costs with slot-dup + 1/d weighting --------
+function buildCost(apartments, demands, spots){
+  const aptNames = Object.keys(apartments);
+  const spotNames = Object.keys(spots);
+  const dvals = aptNames.map(a=> +demands[a]||0);
+  if (dvals.some(d=> d!==1 && d!==2)) throw new Error("Demands must be 1 or 2.");
+  const totalSlots = dvals.reduce((s,d)=>s+d,0);
+  if (spotNames.length < totalSlots) throw new Error(`Not enough spots: need ${totalSlots}, have ${spotNames.length}`);
+
+  const base = aptNames.map(a=> spotNames.map(p=> dist(apartments[a], spots[p])));
+  const rows = [], slotToApt=[], slotIdx=[], n=aptNames.length, m=spotNames.length;
+  for(let i=0;i<n;i++){
+    const d = dvals[i];
+    for(let s=0;s<d;s++){
+      rows.push(base[i].map(x=> x/d));
+      slotToApt.push(aptNames[i]);
+      slotIdx.push(s);
+    }
+  }
+  return {C: rows, slotToApt, slotIdx, aptNames, spotNames};
+}
+
+// -------- Hungarian (JS, padded square) --------
+function hungarian(cost){
+  const R = cost.length, C = cost[0].length, N = Math.max(R,C);
+  const maxVal = Math.max(...cost.flat());
+  const BIG = (isFinite(maxVal)? maxVal:1)*1e6 + 1;
+  const a = Array.from({length:N},(_,i)=> Array.from({length:N},(__,j)=> (i<R&&j<C)? cost[i][j] : BIG));
+  // row min
+  for(let i=0;i<N;i++){ const rmin=Math.min(...a[i]); for(let j=0;j<N;j++) a[i][j]-=rmin; }
+  // col min
+  for(let j=0;j<N;j++){ let cmin=Infinity; for(let i=0;i<N;i++) cmin=Math.min(cmin,a[i][j]); for(let i=0;i<N;i++) a[i][j]-=cmin; }
+  const mask=Array.from({length:N},()=>Array(N).fill(0));
+  const rowCover=Array(N).fill(false), colCover=Array(N).fill(false);
+  function rowHasStar(i){return mask[i].some(v=>v===1);} function colHasStar(j){return mask.some(r=>r[j]===1);} 
+  function findStarInRow(i){ return mask[i].indexOf(1);} function findStarInCol(j){ for(let i=0;i<N;i++) if(mask[i][j]===1) return i; return -1; }
+  function findPrimeInRow(i){ return mask[i].indexOf(2);} 
+  for(let i=0;i<N;i++) for(let j=0;j<N;j++) if(a[i][j]===0 && !rowHasStar(i) && !colHasStar(j)) mask[i][j]=1;
+  for(let j=0;j<N;j++) if(colHasStar(j)) colCover[j]=true;
+  while(true){
+    if(colCover.filter(Boolean).length===N) break;
+    let zRow=-1,zCol=-1;
+    while(true){
+      let found=false;
+      for(let i=0;i<N;i++) if(!rowCover[i]){
+        for(let j=0;j<N;j++) if(!colCover[j] && a[i][j]===0){ zRow=i; zCol=j; found=true; break; }
+        if(found) break;
+      }
+      if(zRow===-1){ // adjust
+        let minUn=Infinity; for(let i=0;i<N;i++) if(!rowCover[i]) for(let j=0;j<N;j++) if(!colCover[j]) minUn=Math.min(minUn,a[i][j]);
+        if(!isFinite(minUn)) minUn=0; for(let i=0;i<N;i++) for(let j=0;j<N;j++){ if(rowCover[i]) a[i][j]+=minUn; if(!colCover[j]) a[i][j]-=minUn; }
+      } else {
+        mask[zRow][zCol]=2; const starCol=findStarInRow(zRow);
+        if(starCol!==-1){ rowCover[zRow]=true; colCover[starCol]=false; }
+        else { const path=[[zRow,zCol]]; while(true){ const r=findStarInCol(path[path.length-1][1]); if(r===-1) break; path.push([r,path[path.length-1][1]]); const c=findPrimeInRow(r); path.push([r,c]); }
+          for(const [r,c] of path){ if(mask[r][c]===1) mask[r][c]=0; else if(mask[r][c]===2) mask[r][c]=1; }
+          for(let i=0;i<N;i++){ rowCover[i]=false; for(let j=0;j<N;j++) if(mask[i][j]===2) mask[i][j]=0; } for(let j=0;j<N;j++) colCover[j]=false; for(let j=0;j<N;j++) if(colHasStar(j)) colCover[j]=true; break; }
+      }
+    }
+  }
+  const res=[]; for(let i=0;i<R;i++) for(let j=0;j<C;j++) if(mask[i][j]===1) res.push([i,j]); return res;
+}
+
+// -------- State & UI --------
+let state = { apartments:{}, demands:{}, spots:{}, aptNames:[], spotNames:[], slotMap:[] };
+
+// Map
+let map = L.map('map', {zoomControl:true});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution:'© OpenStreetMap'}).addTo(map);
+map.setView([0,0], 2);
+let layerApts=L.layerGroup().addTo(map), layerSpots=L.layerGroup().addTo(map), layerLines=L.layerGroup().addTo(map);
+function fitAll(){ const group = new L.featureGroup([layerApts, layerSpots]); try{ map.fitBounds(group.getBounds().pad(0.2)); }catch(e){} }
+
+function recomputeKPIs(){
+  $("kA").textContent = state.aptNames.length || '–';
+  $("kSlots").textContent = state.slotMap.length || '–';
+  $("kSpots").textContent = state.spotNames.length || '–';
+}
+
+function computeAvg(){
+  const per={}, names=state.aptNames; names.forEach(a=>per[a]=[]);
+  for(const rec of state.slotMap){ const a=state.apartments[rec.apt], p=state.spots[rec.spot]; if(a&&p) per[rec.apt].push(dist(a,p)); }
+  let sum=0, k=0; for(const a of names){ const arr=per[a]; const el=document.getElementById('mean-'+a); if(arr && arr.length){ const m=arr.reduce((x,y)=>x+y,0)/arr.length; if(el) el.textContent=m.toFixed(3); sum+=m; k++; } else { if(el) el.textContent='—'; } }
+  $("kAvg").textContent = k? (sum/k).toFixed(3) : '–';
+}
+
+function drawMap(){
+  layerApts.clearLayers(); layerSpots.clearLayers(); layerLines.clearLayers();
+  for(const [name,xy] of Object.entries(state.apartments)){
+    L.circleMarker([xy[1], xy[0]], {radius:6,weight:1,color:'#1d4ed8',fillColor:'#60a5fa',fillOpacity:0.9})
+     .bindTooltip(name,{permanent:true,direction:'right',offset:[8,0]}).addTo(layerApts);
+  }
+  for(const [name,xy] of Object.entries(state.spots)){
+    const isC = String(name).startsWith('C') || String(name).toLowerCase().startsWith('carport');
+    const color = isC? '#7c3aed' : '#059669'; const fill = isC? '#a78bfa' : '#34d399';
+    L.circleMarker([xy[1], xy[0]], {radius:5,weight:1,color,fillColor:fill,fillOpacity:0.9})
+      .bindTooltip(name).addTo(layerSpots);
+  }
+  // lines
+  const byApt={}; for(const rec of state.slotMap){ (byApt[rec.apt] ||= []).push(rec.spot); }
+  for(const [apt, list] of Object.entries(byApt)){
+    const axy = state.apartments[apt]; if(!axy) continue;
+    for(const sp of list){ const pxy=state.spots[sp]; if(!pxy) continue; L.polyline([[axy[1],axy[0]],[pxy[1],pxy[0]]],{color:'#f59e0b',weight:2,opacity:.9}).addTo(layerLines); }
+  }
+}
+
+function renderEditor(){
+  const area = $("assignArea"); if(!state.slotMap.length){ area.textContent='No assignments yet.'; return; }
+  const demands = state.demands; const mapSel={}; for(const r of state.slotMap){ (mapSel[r.apt] ||= {})[r.idx]=r.spot; }
+  const chosen = new Set(state.slotMap.map(x=>x.spot));
+  let html = '<table><thead><tr><th>Apartment</th><th>Demand</th><th>Assigned spots</th><th class="right">Mean distance</th></tr></thead><tbody>';
+  for(const a of state.aptNames){ const need=+demands[a]||0; html += `<tr><td><span class="pill">${a}</span></td><td>${need}</td><td>`; for(let k=0;k<need;k++){ const current = (mapSel[a]&&mapSel[a][k])? mapSel[a][k] : null; html += `<select data-apt="${a}" data-idx="${k}">`; for(const sp of state.spotNames){ const used = chosen.has(sp) && sp!==current; html += `<option value="${sp}" ${sp===current?'selected':''} ${used?'disabled':''}>${sp}</option>`; } html += `</select>`; if(k<need-1) html+=' '; } html += `</td><td class="right" id="mean-${a}">–</td></tr>`; }
+  html += '</tbody></table>'; area.innerHTML = html;
+  area.querySelectorAll('select').forEach(sel=> sel.addEventListener('change', ()=>{ const apt=sel.dataset.apt, idx=+sel.dataset.idx, spot=sel.value; for(const s of state.slotMap){ if(s.spot===spot && !(s.apt===apt && s.idx===idx)){ s.spot=null; } } let rec=state.slotMap.find(x=>x.apt===apt && x.idx===idx); if(!rec){ rec={apt,idx,spot}; state.slotMap.push(rec);} else { rec.spot=spot; } const avail=new Set(state.spotNames); for(const s of state.slotMap){ if(s.spot) avail.delete(s.spot);} for(const s of state.slotMap){ if(!s.spot){ const n=avail.values().next().value; if(n){ s.spot=n; avail.delete(n);} } } recomputeKPIs(); computeAvg(); renderEditor(); drawMap(); }));
+  computeAvg();
+}
+
+function computeOptimal(){
+  const apartments = parseJSONSafe('Apartments', $("apartments").value);
+  const demands    = parseJSONSafe('Demands', $("demands").value);
+  const spots      = parseJSONSafe('Spots', $("spots").value);
+  const {C, slotToApt, slotIdx, aptNames, spotNames} = buildCost(apartments, demands, spots);
+  const pairs = hungarian(C);
+  const slotMap=[]; for(const [r,c] of pairs){ if(r<slotToApt.length && c<spotNames.length){ slotMap.push({apt:slotToApt[r], idx:slotIdx[r], spot:spotNames[c]}); } }
+  // fill missing
+  const taken=new Set(slotMap.map(x=>x.spot));
+  for(let r=0;r<slotToApt.length;r++){
+    if(!slotMap.find(x=>x.apt===slotToApt[r] && x.idx===slotIdx[r])){
+      let best=null, bestC=Infinity; for(let j=0;j<spotNames.length;j++){ const nm=spotNames[j]; if(taken.has(nm)) continue; const c=C[r][j]; if(c<bestC){ bestC=c; best={apt:slotToApt[r], idx:slotIdx[r], spot:nm}; } } if(best){ slotMap.push(best); taken.add(best.spot); }
+    }
+  }
+  state={ apartments, demands, spots, aptNames, spotNames, slotMap };
+  recomputeKPIs(); computeAvg(); renderEditor(); drawMap(); fitAll();
+}
+
+$("btnOpt").addEventListener('click', ()=>{ try{ computeOptimal(); } catch(e){ alert(e.message||e); } });
+$("btnReset").addEventListener('click', ()=>{ state.slotMap=[]; $("assignArea").textContent='Selections cleared. Click Compute again.'; $("kAvg").textContent='–'; drawMap(); });
+$("btnExport").addEventListener('click', ()=>{ const payload={ assignments: state.slotMap.reduce((acc,rec)=>{ (acc[rec.apt] ||= []).push(rec.spot); return acc; }, {}), metric: $("metric").value }; const a=document.createElement('a'); const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}); a.href=URL.createObjectURL(blob); a.download='parking_assignment_result.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),800); });
+$("btnFit").addEventListener('click', fitAll);
+</script>
+</body>
+</html>
